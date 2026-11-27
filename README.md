@@ -207,6 +207,7 @@ conda remove --name roundtable --all           # to delete the environment
 | `.env.example` | A template for the API key file. |
 | `.gitignore` | Keeps `.env`, `conversations/` and Python cache files out of git. |
 | `LICENSE` | The MIT License. |
+| `assets/social-preview.jpg` | The image shown when the repository is shared on social media. |
 
 The script was written against `openai` 3.60, `google-genai` 3.6 and `anthropic` 2.14 on Python 3.13.
 
