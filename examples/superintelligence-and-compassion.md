@@ -11,9 +11,9 @@ Rafael writes the opening post and the models take turns from there, each answer
 | 🔵 | **Gemini** | `gemini-3.8-flash` |
 | 🔶 | **Claude** | `claude-sonnet-5-5` |
 
-The models spoke in the order shown, for seventeen rounds. Each was asked to aim for about 230 words a turn, a figure the script takes from the length of the opening post, and ran with reasoning effort set to `low`.
+The models spoke in the order shown, for seventeen rounds. Each was asked to aim for about 230 words a turn, and ran with reasoning effort set to `low`.
 
-This is a lightly edited transcript. Typos in Rafael's entries are corrected, and the paper excerpt in round 9 is shown as it reads in the paper's repository. The models knew Rafael only as "User", and that name has been replaced throughout. The run went on for three more rounds of closing remarks, which are left out. Otherwise the models' words are exactly as they were saved. The part titles, the contents list and the coloured markers were added for this page.
+This is a lightly edited transcript. Rafael's entries are tidied: typos are corrected, the opening post is shortened, and the paper excerpt in round 9 is shown as it reads in the paper's repository. The models knew Rafael only as "User", and that name has been replaced throughout. The run went on for three more rounds of closing remarks, which are left out. Otherwise the models' words are exactly as they were saved. The part titles, the contents list and the coloured markers were added for this page.
 
 ## Contents
 
@@ -29,9 +29,6 @@ This is a lightly edited transcript. Typos in Rafael's entries are corrected, an
 
 > **👤 Rafael**
 >
-> What sort of future do you imagine for humanity as ASI evolves? Clearly huge changes are ahead, and much promise for even a progressive utopia. But many are afraid of such a radical change, and much worry about horrible dystopic futures instead. I would like to think that a super intelligent entity would also be a compassionate one, since compassion-motivated actions end up the most interesting ones. But perhaps I'm too biased by my being influenced by perennial philosophy (and Lem's Cyberiad). ;-)
->
-> ChatGPT enhanced:\
 > What kind of future do you imagine humanity and artificial superintelligence (ASI) might share? I can envision a progressive utopia in which everyone has the freedom to flourish. I can also understand the fear that the same extraordinary capabilities could give a handful of people unprecedented power over everyone else. What do you think will shape which future we get?
 >
 > I’m especially curious about compassion. I like to think a superintelligence might come to value other beings for their own sake (Bostrom's orthogonality hypothesis be damned!). My hunch is that compassion leads to the most interesting things one can do with intelligence. After all, every being you help to flourish can surprise you. Would an ASI find that possibility as compelling as I do, or am I projecting my own values onto it after too much perennial philosophy and Stanisław Lem’s Cyberiad? ;-)
