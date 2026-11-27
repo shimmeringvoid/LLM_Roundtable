@@ -4,7 +4,7 @@ A Python script that runs a turn-taking conversation between ChatGPT, Gemini and
 
 You write the opening post. The models then take turns in the order you choose, each replying to what the others just said, at roughly the length of your post. When the rounds are done you can add an entry of your own and let them carry on. The whole conversation is saved as it goes, as a readable Markdown transcript and as a JSON file.
 
-To see what one looks like, read [Humanity, superintelligence and compassion](examples/superintelligence-and-compassion.md), a twenty-round conversation reproduced in full.
+To see what one looks like, read [Humanity, superintelligence and compassion](examples/superintelligence-and-compassion.md), a seventeen-round conversation, lightly edited for reading.
 
 ## Setup
 
@@ -209,7 +209,7 @@ conda remove --name roundtable --all           # to delete the environment
 | `.env.example` | A template for the API key file. |
 | `.gitignore` | Keeps `.env`, `conversations/` and Python cache files out of git. |
 | `LICENSE` | The MIT License. |
-| `examples/superintelligence-and-compassion.md` | A full conversation, laid out for reading. |
+| `examples/superintelligence-and-compassion.md` | An example conversation, lightly edited and laid out for reading. |
 | `assets/social-preview.jpg` | The image shown when the repository is shared on social media. |
 
 The script was written against `openai` 3.60, `google-genai` 3.6 and `anthropic` 2.14 on Python 3.13.
