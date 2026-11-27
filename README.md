@@ -2,7 +2,7 @@
 
 A Python script that runs a turn-taking conversation between ChatGPT, Gemini and Claude.
 
-You write the opening post. The models then take turns in the order you choose, each replying briefly to what the others just said. The whole conversation is saved as it goes, as a readable Markdown transcript and as a JSON file.
+You write the opening post. The models then take turns in the order you choose, each replying to what the others just said, at roughly the length of your post. When the rounds are done you can add an entry of your own and let them carry on. The whole conversation is saved as it goes, as a readable Markdown transcript and as a JSON file.
 
 ## Setup
 
@@ -66,11 +66,12 @@ Speaking order [chatgpt, gemini, claude]: claude, chatgpt, gemini
 How many rounds? [3]: 2
 
 Your opening post. Several paragraphs are fine; type END on a line of its own to send it.
-> Is a hot dog a sandwich?
+> Is a hot dog a sandwich? I say the bun is one hinged piece of bread, so it cannot be.
 > END
 
 Speaking order: Claude -> ChatGPT -> Gemini
-Saving after every turn to .../conversations/roundtable_2026-11-26_15-04-10.md  (press Ctrl+C to stop early)
+Reply length: about 30 words each (your opening post has 20 words, and 30 is the minimum)
+Saving after every turn to .../conversations/roundtable_2026-11-27_05-30-10.md  (press Ctrl+C to stop early)
 
 ----- Round 1 -----
 
@@ -82,9 +83,37 @@ ChatGPT:
 
 Gemini:
   ...
+
+----- Round 2 -----
+
+  ...
+
+What next?
+  Join in:   type your entry, then END on a line of its own. The models then run 2 more rounds.
+  Carry on:  type a number, and the models run that many more rounds without you.
+  Finish:    press Enter.
+>
 ```
 
-After the last round you can ask for more rounds, or press Enter to finish. Press Ctrl+C at any time to stop early. Everything said up to that point is already saved.
+Press Ctrl+C at any time to stop early. Everything said up to that point is already saved.
+
+### Reply length
+
+Each reply aims for about as many words as your opening post, so a one-line question gets brief answers and a longer post gets fuller ones. The number is rounded to the nearest ten and kept between 30 and 400 words.
+
+It is a guide, not a limit: the models are told they may run longer when a point needs it. Entries you add later don't change it.
+
+To set the length yourself, run with `--words 80`, or change `REPLY_WORDS` in the settings.
+
+### Joining in
+
+When the rounds are done, the script asks what next:
+
+- **Join in.** Type an entry of your own, then `END` on a line of its own. It is added to the conversation, and the models run the same number of rounds again, answering you first.
+- **Carry on.** Type a number, and the models run that many more rounds without you.
+- **Finish.** Press Enter.
+
+The same question comes back after every batch of rounds, so you can step in as often as you like.
 
 ### Command-line options
 
@@ -93,16 +122,17 @@ Anything you give on the command line is not asked for.
 | Option | What it does |
 |---|---|
 | `--order claude,chatgpt,gemini` | Sets the speaking order: any two or all three of `chatgpt`, `gemini` and `claude`. |
-| `--rounds 4` | Runs exactly this many rounds, then stops without offering more. |
+| `--rounds 4` | Sets how many rounds the models run before you are asked what next. |
 | `--prompt "Is a hot dog a sandwich?"` | Gives your opening post. |
 | `--prompt-file post.txt` | Reads the opening post from a text file. |
-| `--max-words 80` | Sets the target length of each reply (default 120). |
+| `--words 80` | Aims for about this many words per reply, instead of matching your opening post. |
+| `--no-follow-up` | Finishes when the rounds are done, without asking what next. |
 | `--check` | Tests each API key and model name, then exits. |
 
 For example, this runs from start to finish without asking anything:
 
 ```bash
-python llm_roundtable.py --order gemini,claude,chatgpt --rounds 3 --prompt-file post.txt
+python llm_roundtable.py --order gemini,claude,chatgpt --rounds 3 --prompt-file post.txt --no-follow-up
 ```
 
 ## Saved conversations
@@ -125,11 +155,12 @@ The settings are at the top of `llm_roundtable.py`.
 | `MODELS` | `gpt-6.2-sol`, `gemini-3.8-flash`, `claude-sonnet-5-5` | The model that plays each participant. A stronger, pricier alternative is noted beside each one. |
 | `DEFAULT_ORDER` | ChatGPT, Gemini, Claude | The speaking order when you just press Enter. |
 | `DEFAULT_ROUNDS` | 3 | The number of rounds when you just press Enter. |
-| `MAX_WORDS` | 120 | The target length of each reply. |
+| `REPLY_WORDS` | `None` | A fixed target length for replies, in words. `None` means match the opening post. |
+| `MIN_REPLY_WORDS`, `MAX_REPLY_WORDS` | 30, 400 | The limits applied when the length follows the opening post. |
 | `REASONING_EFFORT` | `"low"` | How hard each model thinks before replying: `"low"`, `"medium"`, `"high"`, or `None` for each provider's own default. |
 | `MAX_OUTPUT_TOKENS` | 8000 | The ceiling on tokens per reply, including hidden thinking. It is a cost safety net, not the length control. |
 | `REQUEST_TIMEOUT` | 180 | Seconds to wait for one reply. |
-| `USER_NAME` | `"User"` | How your opening post is labelled. |
+| `USER_NAME` | `"User"` | How your posts are labelled. |
 | `SYSTEM_PROMPT` | | The standing instructions every model receives. Edit it to change the tone of the conversation. |
 
 Providers rename and retire models often. The defaults were current in November 2026. If `--check` reports that a model was not found, put a current one in `MODELS`.
@@ -138,13 +169,15 @@ Providers rename and retire models often. The defaults were current in November 
 
 The script keeps the transcript. On each turn it sends the speaking model the whole conversation from that model's point of view: its own earlier replies appear as its own turns, and everything the others said arrives labelled with the speaker's name, like `[Gemini]: ...`.
 
-From the second round on, the newest thing each model reads is the other two models' latest replies. Its instructions tell it to respond to them directly and briefly.
+From the second round on, the newest thing each model reads is the other two models' latest replies, plus your own entry if you have just added one. Its instructions tell it to respond to them directly, to answer you first when you have just posted, and to aim for the reply length described above.
 
 ## Cost
 
 Every reply is one API call, so a run makes rounds × participants calls, and `--check` makes three small ones.
 
-At November 2026 list prices, a default three-round conversation should cost roughly 5 to 15 US cents in total. That is an estimate: the models' hidden thinking is billed too, and its length varies.
+At November 2026 list prices, three rounds with replies of around 100 words should cost roughly 5 to 15 US cents in total. Longer replies and more rounds cost more, and because the whole conversation is sent again on every turn, the cost of a long conversation grows faster than its length.
+
+These are estimates: the models' hidden thinking is billed too, and its length varies.
 
 ## Troubleshooting
 

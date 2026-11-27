@@ -3,8 +3,10 @@
 LLM Roundtable: a turn-taking conversation between ChatGPT, Gemini and Claude.
 
 You write the opening post. The models then take turns in the order you choose,
-each replying briefly to what the others just said. The whole conversation is
-saved after every turn, as a readable Markdown transcript and as a JSON file.
+each replying to what the others just said, at roughly the length of your post.
+When the rounds are done you can add an entry of your own and let them carry
+on. The whole conversation is saved after every turn, as a readable Markdown
+transcript and as a JSON file.
 
 SETUP (README.md has the full walk-through)
     1. Install the three SDKs. Either create the conda environment that comes
@@ -28,8 +30,8 @@ USAGE
     python llm_roundtable.py              asks for the order, rounds and your post
     python llm_roundtable.py --check      tests each API key with one tiny request
     python llm_roundtable.py --order claude,chatgpt,gemini --rounds 4
-    python llm_roundtable.py --prompt "Is a hot dog a sandwich?"
-    python llm_roundtable.py --prompt-file my_post.txt
+    python llm_roundtable.py --prompt "Is a hot dog a sandwich?" --words 60
+    python llm_roundtable.py --prompt-file my_post.txt --rounds 3 --no-follow-up
 """
 
 from __future__ import annotations
@@ -60,7 +62,14 @@ MODELS = {
 
 DEFAULT_ORDER = ["chatgpt", "gemini", "claude"]  # speaking order if you don't choose one
 DEFAULT_ROUNDS = 3  # in one round, each participant speaks once
-MAX_WORDS = 120     # target length of each reply
+
+# Reply length. Each reply aims for about as many words as your opening post,
+# kept between the two limits below. The models are told this is a guide, not a
+# hard limit, so a reply may run longer when a point needs it. To use one fixed
+# length instead, set REPLY_WORDS to a number (or run with --words).
+REPLY_WORDS = None
+MIN_REPLY_WORDS = 30
+MAX_REPLY_WORDS = 400
 
 # How hard each model thinks before replying: "low", "medium" or "high".
 # "low" keeps a casual conversation quick and cheap. Use None to leave the
@@ -68,12 +77,13 @@ MAX_WORDS = 120     # target length of each reply
 REASONING_EFFORT = "low"
 
 # Ceiling on the tokens one reply may use, INCLUDING the model's hidden
-# thinking. It is a cost safety net, not the length control (MAX_WORDS is), so
-# keep it generous: if it is too low, a reply can come back empty.
+# thinking. It is a cost safety net, not the length control (the reply-length
+# settings above are), so keep it generous, well above the longest reply you
+# expect: if it is too low, a reply can come back empty.
 MAX_OUTPUT_TOKENS = 8000
 
 REQUEST_TIMEOUT = 180  # seconds to wait for one reply before giving up
-USER_NAME = "User"     # how your opening post is labelled in the conversation
+USER_NAME = "User"     # how your posts are labelled in the conversation
 
 HERE = Path(__file__).resolve().parent
 SAVE_DIR = HERE / "conversations"  # transcripts are written here
@@ -84,8 +94,8 @@ ENV_FILE = HERE / ".env"           # optional file holding your API keys
 SYSTEM_PROMPT = """\
 You are {name}, the AI model made by {maker}, taking part in a roundtable
 conversation with {others}. A human, called "{user}" here, opened the
-conversation with a post and is now reading along without replying. You speak
-in turns, in this repeating order: {order}.
+conversation with a post. {user} reads along and may add a further entry from
+time to time. You speak in turns, in this repeating order: {order}.
 
 What the others say reaches you labelled with the speaker's name in square
 brackets, like "[{user}]: ...". Your own earlier replies appear as your
@@ -93,10 +103,12 @@ previous turns.
 
 On each of your turns:
 - Respond directly to what {others} said most recently. Agree, disagree,
-  question or build on specific points, and mention them by name. If no other
-  model has spoken yet, respond to {user}'s opening post.
-- Keep it short: {max_words} words at most, in plain conversational prose with
-  no headings or bullet lists.
+  question or build on specific points, and mention them by name. Whenever
+  {user} has just posted, whether the opening post or a later entry, respond
+  to that first.
+- Aim for about {words} words. That is a guide, not a limit: take more room
+  when a point needs it, and never pad to reach it. Write plain conversational
+  prose with no headings or bullet lists.
 - Move the conversation forward. Add a new point, example or question instead
   of summarising or repeating, skip the compliments, and say so plainly when
   you disagree.
@@ -360,7 +372,7 @@ def make_turn(speaker: str, text: str, round_no: int, model: str | None = None) 
     }
 
 
-def system_prompt(who: str, order: list[str], max_words: int) -> str:
+def system_prompt(who: str, order: list[str], words: int) -> str:
     """Fill in SYSTEM_PROMPT for one participant."""
     names = [PARTICIPANTS[key]["name"] for key in order]
     me = PARTICIPANTS[who]
@@ -370,8 +382,22 @@ def system_prompt(who: str, order: list[str], max_words: int) -> str:
         others=" and ".join(name for name in names if name != me["name"]),
         order=", ".join(names),
         user=USER_NAME,
-        max_words=max_words,
+        words=words,
     )
+
+
+def reply_length(post: str, fixed: int | None) -> tuple[int, str]:
+    """Decide how many words each reply should aim for, and say where the number came from."""
+    if fixed:
+        return fixed, "fixed"
+    count = len(post.split())
+    note = f"your opening post has {count} word{'' if count == 1 else 's'}"
+    if count < MIN_REPLY_WORDS:
+        note += f", and {MIN_REPLY_WORDS} is the minimum"
+    elif count > MAX_REPLY_WORDS:
+        note += f", and {MAX_REPLY_WORDS} is the maximum"
+    rounded = int(count / 10 + 0.5) * 10  # to the nearest ten
+    return max(MIN_REPLY_WORDS, min(rounded, MAX_REPLY_WORDS)), note
 
 
 def messages_for(name: str, transcript: list[dict]) -> list[dict]:
@@ -381,8 +407,8 @@ def messages_for(name: str, transcript: list[dict]) -> list[dict]:
     said in between is merged into a single "user" message, each part labelled
     with its speaker, e.g. "[Gemini]: ...". The result alternates user and
     assistant and ends on a user message, the shape all three APIs expect. On
-    every turn after its first, that final user message holds exactly the
-    other participants' latest replies.
+    every turn after its first, that final user message holds the other
+    participants' latest replies, plus any entry the human has just added.
     """
     messages, heard = [], []
     for turn in transcript:
@@ -402,11 +428,11 @@ def clean_reply(text: str, name: str) -> str:
     return re.sub(label, "", text, count=1, flags=re.IGNORECASE).strip()
 
 
-def take_turn(who: str, order: list[str], client, round_no: int, transcript: list[dict], max_words: int) -> None:
+def take_turn(who: str, order: list[str], client, round_no: int, transcript: list[dict], words: int) -> None:
     """Ask one participant for its next reply and add it to the transcript."""
     name, model = PARTICIPANTS[who]["name"], MODELS[who]
     try:
-        reply = ASK[who](client, model, system_prompt(who, order, max_words), messages_for(name, transcript))
+        reply = ASK[who](client, model, system_prompt(who, order, words), messages_for(name, transcript))
     except Exception as exc:
         raise RoundtableError(f"{name} ({model}) could not reply.\n  {explain(exc)}") from exc
     transcript.append(make_turn(name, clean_reply(reply, name), round_no, model))
@@ -471,9 +497,24 @@ def choose_rounds(given: int | None) -> int:
         answer = ask_user(f"How many rounds? [{DEFAULT_ROUNDS}]: ")
         if not answer:
             return DEFAULT_ROUNDS
-        if answer.isdigit() and int(answer) > 0:
+        if answer.isdecimal() and int(answer) > 0:
             return int(answer)
         print("  Please enter a whole number, 1 or more.")
+
+
+def read_entry(first_lines: list[str] | None = None) -> str:
+    """Read typed or pasted lines until one says END (or input runs out)."""
+    # An explicit END line, rather than a blank line, lets you paste several paragraphs safely.
+    lines = list(first_lines or [])
+    while True:
+        try:
+            line = input("> ")
+        except EOFError:
+            break
+        if line.strip().upper() == "END":
+            break
+        lines.append(line)
+    return "\n".join(lines).strip()
 
 
 def read_opening_post(args: argparse.Namespace) -> str:
@@ -482,21 +523,31 @@ def read_opening_post(args: argparse.Namespace) -> str:
     elif args.prompt:
         post = args.prompt
     else:
-        # An explicit END line (rather than a blank line) lets you paste several paragraphs safely.
         print("\nYour opening post. Several paragraphs are fine; type END on a line of its own to send it.")
-        lines = []
-        while True:
-            try:
-                line = input("> ")
-            except EOFError:
-                break
-            if line.strip().upper() == "END":
-                break
-            lines.append(line)
-        post = "\n".join(lines)
+        post = read_entry()
     if not post.strip():
         raise RoundtableError("No opening post, so there is nothing to discuss.")
     return post.strip()
+
+
+def what_next(rounds: int) -> tuple[str | None, int]:
+    """Ask what to do once the rounds are done.
+
+    Returns your new entry (or None) and the number of rounds to run next; 0 rounds means finish.
+    """
+    again = f"{rounds} more round{'' if rounds == 1 else 's'}"
+    print(
+        "\nWhat next?\n"
+        f"  Join in:   type your entry, then END on a line of its own. The models then run {again}.\n"
+        "  Carry on:  type a number, and the models run that many more rounds without you.\n"
+        "  Finish:    press Enter."
+    )
+    first = ask_user("> ")
+    if not first or first.upper() == "END":
+        return None, 0
+    if first.isdecimal():
+        return None, int(first)
+    return read_entry([first]), rounds
 
 
 def show(text: str) -> None:
@@ -511,6 +562,7 @@ def converse(args: argparse.Namespace) -> None:
     clients = {who: make_client(who) for who in order}  # also asks for any missing API keys
     rounds = choose_rounds(args.rounds)
     post = read_opening_post(args)
+    words, why = reply_length(post, args.words)
 
     names = [PARTICIPANTS[who]["name"] for who in order]
     started = datetime.now()
@@ -522,7 +574,7 @@ def converse(args: argparse.Namespace) -> None:
         "started": started.isoformat(timespec="seconds"),
         "order": names,
         "models": {PARTICIPANTS[who]["name"]: MODELS[who] for who in order},
-        "max_words": args.max_words,
+        "reply_words": words,
         "reasoning_effort": REASONING_EFFORT,
     }
     transcript = [make_turn(USER_NAME, post, round_no=0)]
@@ -531,6 +583,7 @@ def converse(args: argparse.Namespace) -> None:
     except OSError as err:
         raise RoundtableError(f"Can't save conversations in {SAVE_DIR}: {err}") from None
     print(f"\nSpeaking order: {' -> '.join(names)}")
+    print(f"Reply length: about {words} words each ({why})")
     print(f"Saving after every turn to {base}.md  (press Ctrl+C to stop early)")
 
     round_no, failed = 0, False
@@ -541,13 +594,15 @@ def converse(args: argparse.Namespace) -> None:
                 print(f"\n----- Round {round_no} -----")
                 for who in order:
                     print(f"\n{PARTICIPANTS[who]['name']}:")
-                    take_turn(who, order, clients[who], round_no, transcript, args.max_words)
+                    take_turn(who, order, clients[who], round_no, transcript, words)
                     save(base, details, transcript)
                     show(transcript[-1]["text"])
-            rounds = 0
-            if args.rounds is None:  # no fixed number was asked for on the command line, so offer more
-                answer = ask_user("\nMore rounds? Enter a number, or press Enter to finish: ")
-                rounds = int(answer) if answer.isdigit() else 0
+            if args.no_follow_up:
+                break
+            entry, rounds = what_next(rounds)
+            if entry and rounds:  # your entry opens the next round, so every model sees it before replying
+                transcript.append(make_turn(USER_NAME, entry, round_no + 1))
+                save(base, details, transcript)
     except KeyboardInterrupt:
         print("\n\nStopped early.")
     except RoundtableError as err:  # a model failed to reply; everything before it is already saved
@@ -576,7 +631,7 @@ def check() -> None:
 
 
 def positive_int(text: str) -> int:
-    if not text.isdigit() or int(text) < 1:
+    if not text.isdecimal() or int(text) < 1:
         raise argparse.ArgumentTypeError("must be a whole number, 1 or more")
     return int(text)
 
@@ -584,10 +639,11 @@ def positive_int(text: str) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description="A turn-taking conversation between ChatGPT, Gemini and Claude.")
     parser.add_argument("--order", help='speaking order, e.g. "claude,chatgpt,gemini" (any two or all three)')
-    parser.add_argument("--rounds", type=positive_int, help="run exactly this many rounds, then stop; everyone speaks once per round (if omitted you are asked, and offered more at the end)")
+    parser.add_argument("--rounds", type=positive_int, help="how many rounds the models run before you are asked what next; everyone speaks once per round (asked for if omitted)")
     parser.add_argument("--prompt", help="your opening post")
     parser.add_argument("--prompt-file", help="read your opening post from a text file")
-    parser.add_argument("--max-words", type=positive_int, default=MAX_WORDS, help=f"target length of each reply (default {MAX_WORDS})")
+    parser.add_argument("--words", type=positive_int, default=REPLY_WORDS, help="aim for about this many words per reply, instead of matching the length of your opening post")
+    parser.add_argument("--no-follow-up", action="store_true", help="finish when the rounds are done, without asking what next")
     parser.add_argument("--check", action="store_true", help="test each API key and model name, then exit")
     args = parser.parse_args()
 
