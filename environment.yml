@@ -1,0 +1,20 @@
+# Conda environment for LLM Roundtable.
+#
+#   Create it:    conda env create -f environment.yml
+#   Activate it:  conda activate roundtable
+#   Update it:    conda env update -f environment.yml --prune
+#   Remove it:    conda remove --name roundtable --all
+name: roundtable
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.13
+  - pip
+  - pip:
+      # The three official SDKs. They are installed with pip because new
+      # releases reach PyPI first. Each range starts at the version the script
+      # was written against and stays within that major version.
+      - "openai>=3.60,<4"
+      - "google-genai>=3.6,<4"
+      - "anthropic>=2.14,<3"

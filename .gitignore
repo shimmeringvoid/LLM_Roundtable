@@ -1,0 +1,15 @@
+# API keys. Never commit this file.
+.env
+
+# Saved conversations. Delete the next line if you want your transcripts in the repository.
+conversations/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Operating system and editor clutter
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
