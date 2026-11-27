@@ -91,10 +91,12 @@ Gemini:
   ...
 
 What next?
-  Join in:   type your entry, then END on a line of its own. The models then run 2 more rounds.
+  Join in:   type your entry, then END on a line of its own, and say how many rounds should follow.
   Carry on:  type a number, and the models run that many more rounds without you.
   Finish:    press Enter.
->
+> You have all dodged the question. Yes or no, and why?
+> END
+How many rounds? [2]: 1
 ```
 
 Press Ctrl+C at any time to stop early. Everything said up to that point is already saved.
@@ -111,11 +113,11 @@ To set the length yourself, run with `--words 80`, or change `REPLY_WORDS` in th
 
 When the rounds are done, the script asks what next:
 
-- **Join in.** Type an entry of your own, then `END` on a line of its own. It is added to the conversation, and the models run the same number of rounds again, answering you first.
+- **Join in.** Type an entry of your own, then `END` on a line of its own. The script asks how many rounds should follow: type a number, or press Enter for the same number as last time. Your entry is added to the conversation, and the models answer you first.
 - **Carry on.** Type a number, and the models run that many more rounds without you.
 - **Finish.** Press Enter.
 
-The same question comes back after every batch of rounds, so you can step in as often as you like.
+The same question comes back after every batch of rounds, so you can step in as often as you like and change the number of rounds each time. To bring a conversation to a close, join in with a last entry and ask for one round.
 
 ### Command-line options
 

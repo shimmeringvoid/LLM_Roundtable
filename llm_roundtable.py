@@ -490,13 +490,14 @@ def choose_order(given: str | None) -> list[str]:
             print(f"  {err}")
 
 
-def choose_rounds(given: int | None) -> int:
+def choose_rounds(given: int | None, default: int = DEFAULT_ROUNDS) -> int:
+    """Ask how many rounds to run, unless the number was given. Enter accepts the default."""
     if given:
         return given
     while True:
-        answer = ask_user(f"How many rounds? [{DEFAULT_ROUNDS}]: ")
+        answer = ask_user(f"How many rounds? [{default}]: ")
         if not answer:
-            return DEFAULT_ROUNDS
+            return default
         if answer.isdecimal() and int(answer) > 0:
             return int(answer)
         print("  Please enter a whole number, 1 or more.")
@@ -534,11 +535,11 @@ def what_next(rounds: int) -> tuple[str | None, int]:
     """Ask what to do once the rounds are done.
 
     Returns your new entry (or None) and the number of rounds to run next; 0 rounds means finish.
+    After an entry you are asked how many rounds should follow it, and Enter keeps the number used last time.
     """
-    again = f"{rounds} more round{'' if rounds == 1 else 's'}"
     print(
         "\nWhat next?\n"
-        f"  Join in:   type your entry, then END on a line of its own. The models then run {again}.\n"
+        "  Join in:   type your entry, then END on a line of its own, and say how many rounds should follow.\n"
         "  Carry on:  type a number, and the models run that many more rounds without you.\n"
         "  Finish:    press Enter."
     )
@@ -547,7 +548,8 @@ def what_next(rounds: int) -> tuple[str | None, int]:
         return None, 0
     if first.isdecimal():
         return None, int(first)
-    return read_entry([first]), rounds
+    entry = read_entry([first])
+    return entry, choose_rounds(None, default=rounds)
 
 
 def show(text: str) -> None:
