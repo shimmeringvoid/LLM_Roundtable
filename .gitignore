@@ -4,6 +4,9 @@
 # Saved conversations. Delete the next line if you want your transcripts in the repository.
 conversations/
 
+# What the program remembers between runs: your name and the choices you made in the window.
+settings.json
+
 # Python
 __pycache__/
 *.py[cod]

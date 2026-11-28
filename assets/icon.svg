@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 64 64">
+  <title>LLM Roundtable</title>
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#FFFFFF" stroke="#C9CFD8" stroke-width="1.5"/>
+  <circle cx="32" cy="33" r="14" fill="none" stroke="#14181F" stroke-width="4.5"/>
+  <circle cx="32" cy="14" r="6.5" fill="#0F766E"/>
+  <circle cx="15.5" cy="42.5" r="6.5" fill="#1D4ED8"/>
+  <circle cx="48.5" cy="42.5" r="6.5" fill="#B45309"/>
+</svg>

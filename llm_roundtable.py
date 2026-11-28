@@ -32,6 +32,10 @@ USAGE
     python llm_roundtable.py --order claude,chatgpt,gemini --rounds 4
     python llm_roundtable.py --prompt "Is a hot dog a sandwich?" --words 60
     python llm_roundtable.py --prompt-file my_post.txt --rounds 3 --no-follow-up
+    python llm_roundtable.py --name Rafael   what the models call you (remembered)
+    python llm_roundtable.py --page conversations/NAME.json   a page to share
+
+    python roundtable_gui.py              the same thing in a window (needs nicegui)
 """
 
 from __future__ import annotations
@@ -55,9 +59,32 @@ from pathlib import Path
 # provider's documentation in November 2026. Providers rename and retire models
 # often, so if one stops working, replace it here (and run --check to test it).
 MODELS = {
-    "chatgpt": "gpt-6.2-sol",       # stronger but pricier: "gpt-6.2-astra"
-    "gemini": "gemini-3.8-flash",   # stronger but pricier: "gemini-4-argon" (paid keys only)
-    "claude": "claude-sonnet-5-5",  # stronger but pricier: "claude-opus-5-5"
+    "chatgpt": "gpt-6.2-sol",
+    "gemini": "gemini-3.8-flash",
+    "claude": "claude-sonnet-5-5",
+}
+
+# Lighter and stronger models for each participant, cheapest first. The window
+# (roundtable_gui.py) offers these in a list. On the command line, copy one into
+# MODELS above. Stronger models cost more and take longer to reply.
+MODEL_CHOICES = {
+    "chatgpt": {
+        "gpt-6-luna": "lightest and cheapest",
+        "gpt-6.1-terra": "fast and efficient",
+        "gpt-6.2-sol": "everyday work",
+        "gpt-6.2-astra": "most capable",
+    },
+    "gemini": {
+        "gemini-3.5-flash-lite": "lightest and cheapest",
+        "gemini-3.8-flash": "everyday work",
+        "gemini-4-argon": "most capable, paid keys only",
+    },
+    "claude": {
+        "claude-haiku-5-5": "lightest and cheapest",
+        "claude-sonnet-5-5": "everyday work",
+        "claude-opus-5-5": "stronger",
+        "claude-fable-5-2": "most capable",
+    },
 }
 
 DEFAULT_ORDER = ["chatgpt", "gemini", "claude"]  # speaking order if you don't choose one
@@ -83,11 +110,16 @@ REASONING_EFFORT = "low"
 MAX_OUTPUT_TOKENS = 8000
 
 REQUEST_TIMEOUT = 180  # seconds to wait for one reply before giving up
-USER_NAME = "User"     # how your posts are labelled in the conversation
+
+# What the models call you, and how your posts are labelled. Run with --name once
+# (or set it in the window) and it is remembered in settings.json.
+USER_NAME = "User"
 
 HERE = Path(__file__).resolve().parent
-SAVE_DIR = HERE / "conversations"  # transcripts are written here
-ENV_FILE = HERE / ".env"           # optional file holding your API keys
+SAVE_DIR = HERE / "conversations"       # transcripts are written here
+ENV_FILE = HERE / ".env"                # optional file holding your API keys
+SETTINGS_FILE = HERE / "settings.json"  # remembers your name and the window's choices
+PROJECT_URL = "https://github.com/shimmeringvoid/LLM_Roundtable"
 
 # The standing instructions every model receives. Edit this to change the tone
 # of the conversation (more debate, more humour, a particular audience...).
@@ -171,25 +203,59 @@ def read_text(path: Path) -> str:
         raise RoundtableError(f"Couldn't read {path}: it isn't UTF-8 text. Please re-save it as UTF-8.") from None
 
 
+KEYS_FROM_FILE: set[str] = set()  # the key names that load_env_file took from the .env file
+
+
+def env_name(line: str) -> str:
+    """The variable a line of the .env file sets, e.g. "OPENAI_API_KEY" for "export OPENAI_API_KEY=abc"."""
+    return line.strip().removeprefix("export ").partition("=")[0].strip()
+
+
 def load_env_file() -> None:
     """Read API keys from NAME=value lines in the .env file. Real environment variables win."""
     if not ENV_FILE.exists():
         return
     for line in read_text(ENV_FILE).splitlines():
-        name, _, value = line.strip().removeprefix("export ").partition("=")
-        name, words = name.strip(), value.split()
+        name, words = env_name(line), line.partition("=")[2].split()
         # A key never contains spaces, so anything after the first word (a note, a comment) is ignored.
         if name in KEY_NAMES and words and not os.environ.get(name):
             os.environ[name] = words[0].strip("'\"")
+            KEYS_FROM_FILE.add(name)
+
+
+def find_api_key(who: str) -> tuple[str | None, str | None]:
+    """Return a participant's API key and the variable it came from, or (None, None). Never asks."""
+    for var in PARTICIPANTS[who]["env"]:
+        if os.environ.get(var, "").strip():
+            return os.environ[var].strip(), var
+    return None, None
+
+
+def save_api_key(who: str, key: str) -> None:
+    """Use this key from now on and write it to the .env file, replacing any earlier line for it.
+
+    Raises OSError if the file can't be written; the key is then still used until the program ends.
+    """
+    var = PARTICIPANTS[who]["env"][0]
+    os.environ[var] = key
+    lines = read_text(ENV_FILE).splitlines() if ENV_FILE.exists() else []
+    kept = [line for line in lines if env_name(line) != var]  # within the file, the first line for a name wins
+    ENV_FILE.touch(mode=0o600, exist_ok=True)  # a new file is readable only by you from the start
+    ENV_FILE.write_text("\n".join([*kept, f"{var}={key}"]) + "\n", encoding="utf-8")
+    KEYS_FROM_FILE.add(var)
+    try:
+        ENV_FILE.chmod(0o600)  # ...and so is one that was already there (no effect on Windows)
+    except OSError:
+        pass
 
 
 def get_api_key(who: str) -> str | None:
     """Return a participant's API key, asking for it if it isn't set up yet."""
-    info = PARTICIPANTS[who]
-    for var in info["env"]:
-        if os.environ.get(var, "").strip():
-            return os.environ[var].strip()
+    key, _ = find_api_key(who)
+    if key:
+        return key
 
+    info = PARTICIPANTS[who]
     var = info["env"][0]
     print(f"\nNo API key found for {info['name']} (looked for {var}).")
     print(f"You can create one at {info['key_url']}")
@@ -204,18 +270,11 @@ def get_api_key(who: str) -> str | None:
     os.environ[var] = key
     print(f"Got it: {len(key)} characters, ending in ...{key[-4:]}")
     if ask_user(f"Save it to {ENV_FILE} so you aren't asked again? [Y/n] ", default="n").lower() in ("", "y", "yes"):
-        existing = read_text(ENV_FILE) if ENV_FILE.exists() else ""
-        if existing and not existing.endswith("\n"):
-            existing += "\n"
         try:
-            ENV_FILE.write_text(f"{existing}{var}={key}\n", encoding="utf-8")
+            save_api_key(who, key)
         except OSError as err:
             print(f"Couldn't save it ({err}), so it will be used for this run only.")
             return key
-        try:
-            ENV_FILE.chmod(0o600)  # readable only by you (no effect on Windows)
-        except OSError:
-            pass
         print("Saved. Keep that file private: anyone who has a key can spend your credit.")
     return key
 
@@ -229,6 +288,50 @@ def require_api_key(who: str) -> str:
             f"or leave {name} out by choosing an order without it."
         )
     return key
+
+
+# =============================================================================
+# WHAT IS REMEMBERED BETWEEN RUNS
+# settings.json holds your name and, for the window, the choices you last made.
+# =============================================================================
+
+def load_settings() -> dict:
+    """Read settings.json. A missing or damaged file simply means nothing has been saved yet."""
+    try:
+        data = json.loads(read_text(SETTINGS_FILE)) if SETTINGS_FILE.exists() else {}
+    except (RoundtableError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_settings(changes: dict) -> None:
+    """Add `changes` to settings.json. Settings are a convenience, so a failure to save them is ignored."""
+    try:
+        text = json.dumps({**load_settings(), **changes}, indent=2, ensure_ascii=False)
+        SETTINGS_FILE.write_text(text + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def clean_name(name) -> str:
+    """Tidy and check a name for you. The models see it in labels like "[Rafael]: ...", so it has to be plain."""
+    name = " ".join(name.split()) if isinstance(name, str) else ""
+    if not name:
+        raise RoundtableError("Please give a name.")
+    if len(name) > 40 or re.search(r"[^\w .'’-]|_", name):
+        raise RoundtableError("Please use a short name made of letters, numbers and spaces.")
+    if name.lower() in {info["name"].lower() for info in PARTICIPANTS.values()}:
+        raise RoundtableError(f"{name} is already at the table. Please choose a different name.")
+    return name
+
+
+def use_name(name) -> None:
+    """Set what the models call you from here on. Anything unusable leaves the name as it was."""
+    global USER_NAME
+    try:
+        USER_NAME = clean_name(name)
+    except RoundtableError:
+        pass
 
 
 # =============================================================================
@@ -270,10 +373,7 @@ def require_text(text: str | None, stop_reason) -> str:
     """Return the reply text, or raise a clear error if the model produced none."""
     if text and text.strip():
         return text
-    raise RoundtableError(
-        f"The reply was empty (the provider reported: {stop_reason}). If that mentions a token "
-        "limit, the model spent its whole allowance on thinking: raise MAX_OUTPUT_TOKENS."
-    )
+    raise RoundtableError(f"The reply was empty (the provider reported: {stop_reason}). {HINTS['empty']}")
 
 
 def ask_chatgpt(client, model: str, system: str, messages: list[dict]) -> str:
@@ -329,6 +429,21 @@ def ask_claude(client, model: str, system: str, messages: list[dict]) -> str:
 ASK = {"chatgpt": ask_chatgpt, "gemini": ask_gemini, "claude": ask_claude}
 
 
+# The usual cause of each kind of failure: by HTTP status, plus one for a reply that came back empty.
+# (The window, where settings are buttons, words three of these its own way.)
+HINTS = {
+    400: "The provider rejected the request; its message above says why. If it names a "
+         "setting it doesn't accept, try REASONING_EFFORT = None.",
+    401: "The API key was rejected. Check that it was copied in full.",
+    403: "This API key isn't allowed to do that (often: no access to this model).",
+    404: "The model name in MODELS may be out of date.",
+    429: "Rate limit or quota reached. Wait a minute, or check your credit and billing with the provider.",
+    500: "The provider had a temporary problem. Try again in a little while.",
+    "empty": "If that mentions a token limit, the model spent its whole allowance on thinking: "
+             "raise MAX_OUTPUT_TOKENS.",
+}
+
+
 def explain(exc: Exception) -> str:
     """Describe an API error briefly, with a hint about the usual cause."""
     if isinstance(exc, RoundtableError):
@@ -345,15 +460,7 @@ def explain(exc: Exception) -> str:
             "the provider's API keys page (for OpenAI: edit the key and set Permissions to All)."
         )
     else:
-        hint = {
-            400: "The provider rejected the request; its message above says why. If it names a "
-                 "setting it doesn't accept, try REASONING_EFFORT = None.",
-            401: "The API key was rejected. Check that it was copied in full.",
-            403: "This API key isn't allowed to do that (often: no access to this model).",
-            404: "The model name in MODELS may be out of date.",
-            429: "Rate limit or quota reached. Wait a minute, or check your credit and billing with the provider.",
-            500: "The provider had a temporary problem. Try again in a little while.",
-        }.get(status if isinstance(status, int) else None)
+        hint = HINTS.get(status if isinstance(status, int) else None)
     return f"{type(exc).__name__}: {message}" + (f"\n  Hint: {hint}" if hint else "")
 
 
@@ -461,6 +568,206 @@ def save(base: Path, details: dict, transcript: list[dict]) -> None:
     base.with_suffix(".md").write_text("\n".join(lines), encoding="utf-8")
 
 
+class Conversation:
+    """One conversation: who is at the table, what has been said so far, and the files it is saved in.
+
+    Both the command line (converse, below) and the window (roundtable_gui.py) run a conversation through this.
+    """
+
+    def __init__(self, order: list[str], post: str, fixed_words: int | None = None) -> None:
+        self.order = order
+        self.words, self.why = reply_length(post, fixed_words)
+        self.round_no = 0
+        started = datetime.now()
+        stem = f"roundtable_{started:%Y-%m-%d_%H-%M-%S}"
+        self.base, n = SAVE_DIR / stem, 2
+        while self.base.with_suffix(".md").exists() or self.base.with_suffix(".json").exists():
+            self.base, n = SAVE_DIR / f"{stem}_{n}", n + 1  # never overwrite an earlier conversation
+        self.details = {
+            "started": started.isoformat(timespec="seconds"),
+            "order": [PARTICIPANTS[who]["name"] for who in order],
+            "models": {PARTICIPANTS[who]["name"]: MODELS[who] for who in order},
+            "reply_words": self.words,
+            "reasoning_effort": REASONING_EFFORT,
+        }
+        self.transcript = [make_turn(USER_NAME, post, round_no=0)]
+        try:
+            self.save()  # saving first means a folder problem shows up before any API call
+        except OSError as err:
+            raise RoundtableError(f"Can't save conversations in {SAVE_DIR}: {err}") from None
+
+    @classmethod
+    def load(cls, path: Path) -> Conversation:
+        """Reopen a saved conversation from its JSON file, to read it or to carry it on."""
+        try:
+            record = json.loads(read_text(path))
+            names = {info["name"]: who for who, info in PARTICIPANTS.items()}
+            talk = cls.__new__(cls)
+            talk.transcript = record.pop("turns")
+            talk.details = record
+            talk.order = [names[name] for name in record["order"]]
+            talk.words, talk.why = int(record["reply_words"]), "as before"
+            talk.round_no = max(int(turn["round"]) for turn in talk.transcript)
+            if not all(isinstance(turn["speaker"], str) and isinstance(turn["text"], str) for turn in talk.transcript):
+                raise TypeError
+        except (ValueError, KeyError, TypeError, AttributeError):
+            raise RoundtableError(f"{path.name} isn't a conversation saved by this program.") from None
+        talk.base = path.with_suffix("")
+        return talk
+
+    @property
+    def human(self) -> str:
+        """The name you go by in this conversation."""
+        return self.transcript[0]["speaker"]
+
+    def save(self) -> None:
+        save(self.base, self.details, self.transcript)
+
+    def speak(self, who: str, client) -> dict:
+        """Ask one participant for its reply in the current round, save, and return the new turn."""
+        take_turn(who, self.order, client, self.round_no, self.transcript, self.words)
+        self.save()
+        return self.transcript[-1]
+
+    def add_entry(self, text: str) -> None:
+        """Add an entry of yours. It opens the next round, so every model sees it before replying."""
+        self.transcript.append(make_turn(self.human, text, self.round_no + 1))
+        self.save()
+
+
+# =============================================================================
+# A PAGE TO SHARE
+# Lays a saved conversation out for reading, in Markdown that GitHub and most
+# other sites display well. Every word stays as it was said; only layout is added.
+# =============================================================================
+
+# One marker per speaker. These come from the first emoji set, which every emoji font has.
+MARKERS = {"chatgpt": "🔴", "gemini": "🔵", "claude": "🔶"}
+HUMAN_MARKER = "👤"
+BLOCK_START = re.compile(r"\s*(#{1,6}\s|>|[-+*]\s|\d+[.)]\s|```|~~~|\|)|\s{4}|\t")
+
+
+def as_typed(line: str) -> str:
+    """Markdown that displays a line of plain typed text exactly as it was typed."""
+    pieces = re.split(r"(https?://[^\s<>]*[^\s<>.,;:!?)\]'\"])", re.sub(r" {2,}", " ", line.strip()))
+    for k, piece in enumerate(pieces):
+        if k % 2:
+            pieces[k] = f"<{piece}>"  # a web address: keep it whole, as a link
+        else:
+            pieces[k] = re.sub(r"([\\`*_\[\]<>~|$])", r"\\\1", piece.replace("&", "&amp;"))
+    text = re.sub(r"^([#+\-=])", r"\\\1", "".join(pieces))
+    return re.sub(r"^(\d+)([.)])", r"\1\\\2", text)
+
+
+def paragraphs(text: str) -> list[list[str]]:
+    """Split a turn into paragraphs, each a list of its lines."""
+    found, current = [], []
+    for line in text.split("\n"):
+        if line.strip():
+            current.append(line.rstrip())
+        elif current:
+            found.append(current)
+            current = []
+    return found + ([current] if current else [])
+
+
+def default_title(record: dict) -> str:
+    """A title for a conversation's page: the opening words of the opening post."""
+    words = record["turns"][0]["text"].split()
+    return " ".join(words[:9]).rstrip(".,;:") + ("…" if len(words) > 9 else "")
+
+
+def page_markdown(record: dict, title: str = "") -> str:
+    """Lay a saved conversation out as a page: an introduction, a contents list and a marker for each speaker."""
+    turns, names = record["turns"], record["order"]
+    human = turns[0]["speaker"]
+    keys = {info["name"]: who for who, info in PARTICIPANTS.items()}
+    mark = {name: MARKERS.get(keys.get(name, ""), "⚪") for name in names} | {human: HUMAN_MARKER}
+    last_round = max(turn["round"] for turn in turns)
+    started = datetime.fromisoformat(record["started"])
+    words = sum(len(turn["text"].split()) for turn in turns)
+    step = 10 if words < 500 else 100 if words < 5000 else 500
+    about = max(step, int(words / step + 0.5) * step)
+
+    def span(first: int, last: int) -> str:
+        if first == 0:
+            if last == 0:
+                return "Opening post"
+            return "Opening post and " + ("round 1" if last == 1 else f"rounds 1–{last}")
+        return f"Round {first}" if last <= first else f"Rounds {first}–{last}"
+
+    # One part for each entry of yours that opens a round: from that round to the last one before your next entry.
+    entries = [turn for n, turn in enumerate(turns)
+               if turn["speaker"] == human and (n == 0 or turn["round"] != turns[n - 1]["round"])]
+    ends = [entry["round"] - 1 for entry in entries[1:]] + [last_round]
+    in_parts = len(entries) > 1
+
+    count = {2: "two", 3: "three"}.get(len(names), str(len(names)))
+    listed = ", ".join(names[:-1]) + f" and {names[-1]}"
+    effort = record.get("reasoning_effort")
+    page = [
+        f"# {as_typed(title.strip() or default_title(record))}",
+        f"A conversation between {'one human' if human == 'User' else as_typed(human)} and {count} AI models, "
+        f"{listed}, held on {started.day} {started:%B %Y} with [LLM Roundtable]({PROJECT_URL}). "
+        f"About {about:,} words.",
+        "\n".join(
+            ["| | Speaker | Model |", "|:-:|:--|:--|", f"| {HUMAN_MARKER} | **{as_typed(human)}** | the human at the table |"]
+            + [f"| {mark[name]} | **{name}** | `{record['models'].get(name, '')}` |" for name in names]
+        ),
+        f"The models spoke in the order shown, for {last_round} round{'' if last_round == 1 else 's'}. Each was asked "
+        f"to aim for about {record['reply_words']} words a turn"
+        + (f", and ran with reasoning effort set to `{effort}`." if effort else "."),
+        "Every entry is reproduced word for word from the saved transcript. Only the layout was added for this page.",
+    ]
+    if in_parts:
+        teasers = []
+        for n, (entry, end) in enumerate(zip(entries, ends), 1):
+            opening = entry["text"].split()
+            teaser = as_typed(" ".join(opening[:14])) + ("…" if len(opening) > 14 else "")
+            teasers.append(f"- **[Part {n}](#part-{n})** · {span(entry['round'], end)}<br>{teaser}")
+        page += ["## Contents", "\n".join(teasers)]
+
+    part, current_round = 0, None
+    for turn in turns:
+        if turn["round"] != current_round:
+            current_round = turn["round"]
+            if in_parts and turn["speaker"] == human:
+                part += 1
+                page.append(f"## Part {part}")
+            page.append(f"### Round {current_round}" if current_round else "### Opening post")
+        if turn["speaker"] == human:
+            quoted = [f"**{HUMAN_MARKER} {as_typed(human)}**"]
+            quoted += ["\\\n".join(as_typed(line) for line in lines) for lines in paragraphs(turn["text"])]
+            page.append("\n>\n".join("\n".join(f"> {line}" for line in block.split("\n")) for block in quoted))
+        else:
+            # A model's reply is Markdown already, so it goes in as it is. In plain paragraphs the
+            # line breaks are kept; lists, quotations and code are left for Markdown to lay out.
+            page.append(f"**{mark.get(turn['speaker'], '⚪')} {turn['speaker']}**")
+            if "```" in turn["text"] or "~~~" in turn["text"]:
+                page.append(turn["text"].strip("\n"))
+                continue
+            for lines in paragraphs(turn["text"]):
+                plain = not any(BLOCK_START.match(line) for line in lines)
+                page.append(("\\\n" if plain else "\n").join(lines))
+    page += ["---", f"*Made with [LLM Roundtable]({PROJECT_URL}).*"]
+    return "\n\n".join(page) + "\n"
+
+
+def write_page(json_file: Path, title: str = "") -> Path:
+    """Make the page for a saved conversation, next to its JSON file. Returns the page's path."""
+    try:
+        record = json.loads(read_text(json_file))
+        text = page_markdown(record, title)
+    except (ValueError, KeyError, TypeError, IndexError, AttributeError):
+        raise RoundtableError(f"{json_file.name} isn't a conversation saved by this program.") from None
+    page = json_file.with_name(json_file.stem + "_page.md")
+    try:
+        page.write_text(text, encoding="utf-8")
+    except OSError as err:
+        raise RoundtableError(f"Couldn't write {page}: {err}") from None
+    return page
+
+
 # =============================================================================
 # SETTING UP AND RUNNING
 # =============================================================================
@@ -563,73 +870,56 @@ def converse(args: argparse.Namespace) -> None:
     order = choose_order(args.order)
     clients = {who: make_client(who) for who in order}  # also asks for any missing API keys
     rounds = choose_rounds(args.rounds)
-    post = read_opening_post(args)
-    words, why = reply_length(post, args.words)
+    talk = Conversation(order, read_opening_post(args), args.words)
+    print(f"\nSpeaking order: {' -> '.join(talk.details['order'])}")
+    print(f"Reply length: about {talk.words} words each ({talk.why})")
+    print(f"Saving after every turn to {talk.base}.md  (press Ctrl+C to stop early)")
 
-    names = [PARTICIPANTS[who]["name"] for who in order]
-    started = datetime.now()
-    stem = f"roundtable_{started:%Y-%m-%d_%H-%M-%S}"
-    base, n = SAVE_DIR / stem, 2
-    while base.with_suffix(".md").exists() or base.with_suffix(".json").exists():
-        base, n = SAVE_DIR / f"{stem}_{n}", n + 1  # never overwrite an earlier conversation
-    details = {
-        "started": started.isoformat(timespec="seconds"),
-        "order": names,
-        "models": {PARTICIPANTS[who]["name"]: MODELS[who] for who in order},
-        "reply_words": words,
-        "reasoning_effort": REASONING_EFFORT,
-    }
-    transcript = [make_turn(USER_NAME, post, round_no=0)]
-    try:
-        save(base, details, transcript)  # saving first means a folder problem shows up before any API call
-    except OSError as err:
-        raise RoundtableError(f"Can't save conversations in {SAVE_DIR}: {err}") from None
-    print(f"\nSpeaking order: {' -> '.join(names)}")
-    print(f"Reply length: about {words} words each ({why})")
-    print(f"Saving after every turn to {base}.md  (press Ctrl+C to stop early)")
-
-    round_no, failed = 0, False
+    failed = False
     try:
         while rounds:
             for _ in range(rounds):
-                round_no += 1
-                print(f"\n----- Round {round_no} -----")
+                talk.round_no += 1
+                print(f"\n----- Round {talk.round_no} -----")
                 for who in order:
                     print(f"\n{PARTICIPANTS[who]['name']}:")
-                    take_turn(who, order, clients[who], round_no, transcript, words)
-                    save(base, details, transcript)
-                    show(transcript[-1]["text"])
+                    show(talk.speak(who, clients[who])["text"])
             if args.no_follow_up:
                 break
             entry, rounds = what_next(rounds)
-            if entry and rounds:  # your entry opens the next round, so every model sees it before replying
-                transcript.append(make_turn(USER_NAME, entry, round_no + 1))
-                save(base, details, transcript)
+            if entry and rounds:
+                talk.add_entry(entry)
     except KeyboardInterrupt:
         print("\n\nStopped early.")
     except RoundtableError as err:  # a model failed to reply; everything before it is already saved
         print(f"  {err}")
         failed = True
 
-    print(f"\nConversation saved:\n  {base}.md\n  {base}.json")
+    print(f"\nConversation saved:\n  {talk.base}.md\n  {talk.base}.json")
     if failed:
         sys.exit(1)
 
 
+def check_one(who: str) -> tuple[bool, str]:
+    """Send one tiny request to a participant. Returns whether it worked, and its reply or what went wrong."""
+    client = make_client(who)
+    try:
+        reply = ASK[who](client, MODELS[who], "Reply in five words or fewer.", [{"role": "user", "content": "Say hello."}])
+    except Exception as exc:
+        return False, explain(exc)
+    return True, " ".join(reply.split())
+
+
 def check() -> None:
-    """Send one tiny request to each participant to confirm its key and model name work."""
+    """Test every participant, to confirm its key and model name work."""
     for who, info in PARTICIPANTS.items():
         label = f"{info['name']} ({MODELS[who]})"
         try:
-            client = make_client(who)
+            worked, detail = check_one(who)
         except RoundtableError as err:
             print(f"SKIPPED  {label}: {err}")
             continue
-        try:
-            reply = ASK[who](client, MODELS[who], "Reply in five words or fewer.", [{"role": "user", "content": "Say hello."}])
-            print(f"OK       {label}: {' '.join(reply.split())}")
-        except Exception as exc:
-            print(f"FAILED   {label}: {explain(exc)}")
+        print(f"{'OK      ' if worked else 'FAILED  '} {label}: {detail}")
 
 
 def positive_int(text: str) -> int:
@@ -646,12 +936,21 @@ def main() -> None:
     parser.add_argument("--prompt-file", help="read your opening post from a text file")
     parser.add_argument("--words", type=positive_int, default=REPLY_WORDS, help="aim for about this many words per reply, instead of matching the length of your opening post")
     parser.add_argument("--no-follow-up", action="store_true", help="finish when the rounds are done, without asking what next")
+    parser.add_argument("--name", help="what the models call you; it is remembered for next time (default: User)")
     parser.add_argument("--check", action="store_true", help="test each API key and model name, then exit")
+    parser.add_argument("--page", metavar="FILE", help="make a page to share from a saved conversation's .json file, then exit")
+    parser.add_argument("--title", help="the title for that page (default: the opening words of the conversation)")
     args = parser.parse_args()
 
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="replace")  # never crash on a character the terminal can't display
     try:
+        if args.page:
+            print(f"Page written:\n  {write_page(Path(args.page), args.title or '')}")
+            return
+        if args.name:
+            save_settings({"name": clean_name(args.name)})
+        use_name(load_settings().get("name"))
         load_env_file()
         check() if args.check else converse(args)
     except RoundtableError as err:
